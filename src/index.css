@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #050505;
+  color: white;
+  font-family: 'Inter', sans-serif;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  overscroll-behavior: none; /* Stops bounce */
+  touch-action: none;
+}
+
+canvas {
+  touch-action: none !important;
+  outline: none;
+  display: block;
+}
+
+canvas:active {
+  cursor: grabbing;
+}
+
+/* --- ANIMATIONS (REQUIRED FOR WIDGETS TO SLIDE) --- */
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in {
+  animation-duration: 0.5s;
+  animation-fill-mode: forwards;
+  animation-timing-function: ease-out;
+}
+
+.slide-in-from-left-8 {
+  animation-name: slideInLeft;
+}
+
+.slide-in-from-bottom-8 {
+  animation-name: slideInUp;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 210, 190, 0.3);
+  border-radius: 10px;
+}
