@@ -1,3 +1,0 @@
-com.Harshith.DailyDriver.test
-style WhiteBackgroundDialogTheme
-style WhiteBackgroundTheme

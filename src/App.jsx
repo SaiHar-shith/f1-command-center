@@ -4,20 +4,21 @@ import RaceEngineer from './RaceEngineer';
 import CountdownHUD from './CountdownHUD';
 import RouteTelemetry from './RouteTelemetry';
 import LocationSearch from './LocationSearch';
-import PersonalTrainer from './PersonalTrainer'; // <--- 1. Import Here
+import PersonalTrainer from './PersonalTrainer';
 
 // --- CONFIGURATION ---
-const HOME_LOCATION = { 
+const DEFAULT_LOCATION = { 
   name: "HANAMKONDA", 
   country: "INDIA",
   lat: 18.02008874732819, 
   lon: 79.54670127005744,
   timezone: "Asia/Kolkata"
 };
-// Updated to your Hanamkonda location
+
+// ⚠️ IMPORTANT: Replace these with your ACTUAL Gym coordinates for accurate traffic!
 const GYM_LOCATION = { 
-  lat: 18.02008874732819, 
-  lon: 79.54670127005744
+  lat: 17.9427, // Example: Warangal/Hanamkonda area
+  lon: 79.5936  
 };
 
 const getTime = () => {
@@ -31,14 +32,12 @@ const getDate = () => {
       day: d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
     };
 };
-// Helper: Get time for a specific timezone
 const getWorldTime = (tz) => {
   try {
     const d = new Date();
     return d.toLocaleTimeString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
   } catch (e) { return "--:--"; }
 };
-// Helper: Get date for a specific timezone
 const getWorldDate = (tz) => {
   try {
     const d = new Date();
@@ -55,18 +54,62 @@ const getWorldDate = (tz) => {
 export default function App() {
   const [mode, setMode] = useState('F1'); 
   const [weather, setWeather] = useState({ temperature_2m: 24, weather_code: 0, precipitation: 0 });
-  const [currentLocation, setCurrentLocation] = useState(HOME_LOCATION);
+  
+  // "currentLocation" drives the Clock and Weather display
+  const [currentLocation, setCurrentLocation] = useState(DEFAULT_LOCATION);
+  
+  // "userOrigin" drives the Traffic Route calculation (Lat/Lon only)
+  const [userOrigin, setUserOrigin] = useState(null); 
+  
   const [showSearch, setShowSearch] = useState(false);
   const [time, setTime] = useState("");
   const [date, setDate] = useState({ weekday: "", day: "" });
 
+  // --- 1. AUTOMATED LOCATION ENGINE ---
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      console.log("Attempting to detect location...");
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          // Success: We found the user!
+          const foundLocation = {
+            lat: position.coords.latitude,
+            lon: position.coords.longitude
+          };
+          
+          setUserOrigin(foundLocation);
+          
+          // Optional: Update the weather/clock to match where you actually are
+          // We keep the name generic or you can use a reverse geocoding API to get the city name
+          setCurrentLocation(prev => ({
+             ...prev,
+             lat: foundLocation.lat,
+             lon: foundLocation.lon
+          }));
+        },
+        (error) => {
+          console.error("Location detection failed:", error);
+          // Fallback to default if GPS is denied or fails
+          setUserOrigin({ lat: DEFAULT_LOCATION.lat, lon: DEFAULT_LOCATION.lon });
+        }
+      );
+    } else {
+      // Browser doesn't support it
+      setUserOrigin({ lat: DEFAULT_LOCATION.lat, lon: DEFAULT_LOCATION.lon });
+    }
+  }, []);
+
   // Auto-switch back to Home if Gym Mode is activated
   useEffect(() => {
     if (mode === 'GYM') {
-        setCurrentLocation(HOME_LOCATION);
+        // In GYM mode, we usually want to monitor Home -> Gym traffic
+        // So we ensure we are looking at the user's current location info
+        if (userOrigin) {
+            setCurrentLocation(prev => ({...prev, lat: userOrigin.lat, lon: userOrigin.lon}));
+        }
         setShowSearch(false);
     }
-  }, [mode]);
+  }, [mode, userOrigin]);
 
   // CLOCK ENGINE
   useEffect(() => {
@@ -124,10 +167,13 @@ export default function App() {
          {mode === 'F1' ? (
              <CountdownHUD /> 
          ) : (
-             <RouteTelemetry 
-                userLocation={{ lat: HOME_LOCATION.lat, lon: HOME_LOCATION.lon }} 
-                gymLocation={{ lat: GYM_LOCATION.lat, lon: GYM_LOCATION.lon }} 
-             />
+             /* Only render traffic telemetry if we have the user's origin */
+             userOrigin && (
+                <RouteTelemetry 
+                    userLocation={userOrigin} 
+                    gymLocation={GYM_LOCATION} 
+                />
+             )
          )}
       </div>
 
@@ -138,7 +184,7 @@ export default function App() {
           </div>
       )}
 
-      {/* 2. THE NEW PERSONAL TRAINER (Only visible in GYM mode) */}
+      {/* PERSONAL TRAINER (Only visible in GYM mode) */}
       <div className="pointer-events-auto">
          <PersonalTrainer visible={mode === 'GYM'} />
       </div>
@@ -188,7 +234,6 @@ export default function App() {
                     </div>
                     <div className="text-xs text-gray-300 uppercase tracking-widest mt-1">Mission Status</div>
                 </div>
-                {/* Weather details... */}
              </div>
            )}
         </div>

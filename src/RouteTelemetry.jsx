@@ -1,103 +1,119 @@
 import { useState, useEffect } from 'react';
 
-// --- MATH HELPER: HAVERSINE FORMULA ---
-// Calculates distance between two coords if API fails
-const getDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; // Radius of the earth in km
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
-  const d = R * c; // Distance in km
-  return d;
-};
+// --- CONFIGURATION ---
+// 1. Get a Key: https://console.cloud.google.com/google/maps-apis/credentials
+// 2. Enable "Distance Matrix API"
+const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY;
 
-const deg2rad = (deg) => deg * (Math.PI/180);
+// NOTE: Google blocks direct browser calls (CORS). 
+// For dev, use a proxy like 'https://cors-anywhere.herokuapp.com/' or build your own backend.
+const CORS_PROXY = "https://cors-anywhere.herokuapp.com/"; 
 
 const useSmartCommute = (origin, destination) => {
   const [data, setData] = useState({ 
     duration: 0,        
-    delta: "CALC...",      
+    delta: "SYNC...",      
     sectors: [          
-      { id: 1, status: 'PURPLE', label: 'HOME EXIT' },
-      { id: 2, status: 'YELLOW', label: 'MAIN ROAD' },
-      { id: 3, status: 'GREEN', label: 'GYM ENTRY' }
+      { id: 1, status: 'PURPLE', label: 'SECTOR 1' },
+      { id: 2, status: 'PURPLE', label: 'SECTOR 2' },
+      { id: 3, status: 'PURPLE', label: 'SECTOR 3' }
     ]
   });
 
   useEffect(() => {
-    // 1. Initial Checks
     if (!origin || !destination) return;
 
     const calculateRoute = async () => {
       try {
-        // --- ATTEMPT 1: OSRM API ---
-        const url = `https://router.project-osrm.org/route/v1/driving/${origin.lon},${origin.lat};${destination.lon},${destination.lat}?overview=false`;
+        // --- GOOGLE MAPS DISTANCE MATRIX API ---
+        const origins = `${origin.lat},${origin.lon}`;
+        const dests = `${destination.lat},${destination.lon}`;
         
-        // Set a short timeout so we don't wait forever if server is slow
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
-
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!res.ok) throw new Error("API Down");
-
+        // Requesting 'best_guess' traffic model for right now
+        const url = `${CORS_PROXY}https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origins}&destinations=${dests}&departure_time=now&traffic_model=best_guess&key=${GOOGLE_API_KEY}`;
+        
+        const res = await fetch(url);
         const json = await res.json();
-        
-        if (json.routes && json.routes.length > 0) {
-          // API SUCCESS
-          const seconds = json.routes[0].duration;
-          const currentMins = Math.round(seconds / 60);
-          updateData(currentMins);
-          return; 
+
+        if (json.rows && json.rows[0].elements[0].status === "OK") {
+          const element = json.rows[0].elements[0];
+          
+          // 1. Standard Time (No Traffic)
+          const standardSeconds = element.duration.value;
+          // 2. Real Time (With Traffic)
+          const trafficSeconds = element.duration_in_traffic.value;
+          
+          updateData(standardSeconds, trafficSeconds);
+        } else {
+            console.warn("Google API Error:", json);
+            // Fallback logic could go here
         }
+
       } catch (e) {
-        // --- ATTEMPT 2: MATH FALLBACK (Crash Proof) ---
-        // console.warn("API Failed, using Physics Engine...");
-        
-        const distKm = getDistance(origin.lat, origin.lon, destination.lat, destination.lon);
-        // Assume avg city speed of 30km/h + 2 mins for lights
-        const estimatedMins = Math.round((distKm / 30) * 60) + 2; 
-        
-        updateData(estimatedMins);
+        console.error("Traffic Telemetry Failed", e);
+        // Fallback: Use standard physics/math if API fails
+        fallbackCalculation(origin, destination);
       }
     };
 
-    const updateData = (currentMins) => {
-        // Calculate "Traffic" vs Ideal time (85% of current)
-        const idealMins = Math.round(currentMins * 0.85); 
-        const diff = currentMins - idealMins;
+    const updateData = (standardSec, trafficSec) => {
+        const standardMins = Math.round(standardSec / 60);
+        const trafficMins = Math.round(trafficSec / 60);
+        
+        // Calculate the "Delay" caused by traffic
+        const delay = trafficMins - standardMins;
+        
+        let deltaStr = "±0.0m";
+        let sectorColor = "PURPLE"; // Purple = Standard/Fast
 
-        let deltaStr = "-0.0s";
-        let sectorColor = "PURPLE"; 
-
-        if (diff > 5) {
-            deltaStr = `+${diff}m`; 
-            sectorColor = "RED";
-        } else if (diff > 0) {
-            deltaStr = `+${diff}m`; 
-            sectorColor = "YELLOW";
-        } else {
-            deltaStr = `-${Math.abs(diff)}m`; 
-            sectorColor = "PURPLE";
+        // LOGIC: Traffic coloring based on delay
+        if (delay >= 10) {
+            deltaStr = `+${delay}m`; 
+            sectorColor = "RED"; // Heavy Traffic
+        } else if (delay > 2) {
+            deltaStr = `+${delay}m`; 
+            sectorColor = "YELLOW"; // Moderate Traffic
+        } else if (delay <= 0) {
+            deltaStr = `-${Math.abs(delay)}m`; // Faster than average?!
+            sectorColor = "GREEN"; 
         }
 
         setData({
-            duration: currentMins,
+            duration: trafficMins, // Show the REAL time
             delta: deltaStr,
             sectors: [
-                { id: 1, status: 'PURPLE', label: 'HOME EXIT' },
-                { id: 2, status: sectorColor, label: 'HIGHWAY' }, 
-                { id: 3, status: 'GREEN', label: 'GYM ENTRY' }
+                { id: 1, status: 'PURPLE', label: 'EXIT' },
+                // The Middle Sector represents the main commute traffic
+                { id: 2, status: sectorColor, label: 'ROUTE' }, 
+                { id: 3, status: 'PURPLE', label: 'ENTRY' }
+            ]
+        });
+    };
+
+    const fallbackCalculation = (p1, p2) => {
+        // Simple Haversine Fallback if API key is invalid/missing
+        const R = 6371; 
+        const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+        const dLon = (p2.lon - p1.lon) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        const d = R * c; 
+        const estMins = Math.round((d / 30) * 60) + 5; // Approx 30km/h speed
+        
+        setData({
+            duration: estMins,
+            delta: "EST",
+            sectors: [
+                { id: 1, status: 'PURPLE', label: 'OFFLINE' },
+                { id: 2, status: 'PURPLE', label: 'OFFLINE' },
+                { id: 3, status: 'PURPLE', label: 'OFFLINE' }
             ]
         });
     };
 
     calculateRoute();
-    const interval = setInterval(calculateRoute, 60000); // Refresh every minute
+    const interval = setInterval(calculateRoute, 60000 * 2); // Refresh every 2 mins to save API quota
     return () => clearInterval(interval);
 
   }, [origin, destination]);
@@ -106,6 +122,7 @@ const useSmartCommute = (origin, destination) => {
 };
 
 export default function RouteTelemetry({ userLocation, gymLocation }) {
+  // Pass the props directly to the hook
   const { duration, delta, sectors } = useSmartCommute(userLocation, gymLocation);
 
   const getColor = (status) => {
@@ -131,7 +148,7 @@ export default function RouteTelemetry({ userLocation, gymLocation }) {
             
             {/* Header */}
             <div>
-                <h3 className="text-xs font-bold text-gray-500 tracking-[0.3em] uppercase mb-1">Commute Delta</h3>
+                <h3 className="text-xs font-bold text-gray-500 tracking-[0.3em] uppercase mb-1">Traffic Delta</h3>
                 <h1 className={`text-6xl font-black italic font-mono tracking-tighter leading-none ${delta.includes('+') ? 'text-red-500' : 'text-purple-500'}`}>
                   {delta}
                 </h1>
@@ -152,7 +169,7 @@ export default function RouteTelemetry({ userLocation, gymLocation }) {
             {/* REAL ESTIMATED TIME */}
             <div className="mt-2 border-t border-white/10 pt-4">
                  <div className="flex justify-between items-end w-48">
-                    <span className="text-xs text-[#00d2be] font-bold uppercase tracking-widest">ETA</span>
+                    <span className="text-xs text-[#00d2be] font-bold uppercase tracking-widest">ETA (Live)</span>
                     <span className="text-2xl font-mono text-white leading-none">
                         {duration > 0 ? duration : <span className="animate-pulse">...</span>}
                         <span className="text-sm text-gray-500 ml-1">MIN</span>
